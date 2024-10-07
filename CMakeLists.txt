@@ -203,11 +203,9 @@ set(mio_INCLUDE "${SOURCE_DIR}/include")
 #set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_BUILD_TYPE Release)
 
-# set up our target executable and specify its dependencies and includes
-add_executable(seqwish
+add_library(libseqwish STATIC
   ${CMAKE_SOURCE_DIR}/src/utils.cpp
   ${CMAKE_SOURCE_DIR}/src/tempfile.cpp
-  ${CMAKE_SOURCE_DIR}/src/main.cpp
   ${CMAKE_SOURCE_DIR}/src/seqindex.cpp
   ${CMAKE_SOURCE_DIR}/src/paf.cpp
   ${CMAKE_SOURCE_DIR}/src/sxs.cpp
@@ -226,19 +224,19 @@ add_executable(seqwish
   ${CMAKE_SOURCE_DIR}/src/mmap.cpp
   ${CMAKE_SOURCE_DIR}/src/version.cpp
   )
-add_dependencies(seqwish tayweeargs)
-add_dependencies(seqwish sdsl-lite)
-add_dependencies(seqwish gzipreader)
-add_dependencies(seqwish mmmulti)
-add_dependencies(seqwish iitii)
-add_dependencies(seqwish ips4o)
-add_dependencies(seqwish bbhash)
-add_dependencies(seqwish atomicbitvector)
-add_dependencies(seqwish atomicqueue)
-add_dependencies(seqwish ska)
-add_dependencies(seqwish paryfor)
-add_dependencies(seqwish mio)
-target_include_directories(seqwish PUBLIC
+add_dependencies(libseqwish tayweeargs)
+add_dependencies(libseqwish sdsl-lite)
+add_dependencies(libseqwish gzipreader)
+add_dependencies(libseqwish mmmulti)
+add_dependencies(libseqwish iitii)
+add_dependencies(libseqwish ips4o)
+add_dependencies(libseqwish bbhash)
+add_dependencies(libseqwish atomicbitvector)
+add_dependencies(libseqwish atomicqueue)
+add_dependencies(libseqwish ska)
+add_dependencies(libseqwish paryfor)
+add_dependencies(libseqwish mio)
+target_include_directories(libseqwish PUBLIC
   "${sdsl-lite_INCLUDE}"
   "${sdsl-lite-divsufsort_INCLUDE}"
   "${tayweeargs_INCLUDE}"
@@ -252,7 +250,7 @@ target_include_directories(seqwish PUBLIC
   "${ska_INCLUDE}"
   "${paryfor_INCLUDE}"
   "${mio_INCLUDE}")
-target_link_libraries(seqwish
+target_link_libraries(libseqwish
   "${sdsl-lite_LIB}/libsdsl.a"
   "${sdsl-lite-divsufsort_LIB}/libdivsufsort.a"
   "${sdsl-lite-divsufsort_LIB}/libdivsufsort64.a"
@@ -260,6 +258,14 @@ target_link_libraries(seqwish
   Threads::Threads
   jemalloc
   z)
+set_target_properties(libseqwish PROPERTIES OUTPUT_NAME "seqwish")
+
+# set up our target executable and specify its dependencies and includes
+add_executable(seqwish
+  ${CMAKE_SOURCE_DIR}/src/main.cpp
+  )
+target_link_libraries(seqwish PRIVATE libseqwish)
+
 if (BUILD_STATIC)
   #set(CMAKE_EXE_LINKER_FLAGS "-static")
   set(CMAKE_EXE_LINKER_FLAGS "-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive")
