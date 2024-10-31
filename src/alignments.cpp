@@ -130,12 +130,10 @@ void unpack_paf_alignments(const std::string& paf_file,
     }
     std::mutex paf_in_mutex;
     std::atomic<bool> paf_more; paf_more.store(true);
-    std::vector<std::thread> workers; workers.reserve(num_threads);
-    for (uint64_t t = 0; t < num_threads; ++t) {
-        workers.emplace_back(paf_worker, std::ref(paf_in), std::ref(paf_more), std::ref(paf_in_mutex), std::ref(aln_iitree), std::ref(seqidx), std::ref(min_match_len), std::ref(sparsification_factor));
-    }
-    for (uint64_t t = 0; t < num_threads; ++t) {
-        workers[t].join();
+#pragma omp parallel num_threads(num_threads)
+    {
+        paf_worker(std::ref(paf_in), std::ref(paf_more), std::ref(paf_in_mutex), std::ref(aln_iitree),
+                   std::ref(seqidx), std::ref(min_match_len), std::ref(sparsification_factor));
     }
 }
 

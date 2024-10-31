@@ -6,6 +6,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <omp.h>
 #include "paf.hpp"
 #include "sxs.hpp"
 #include "mmmultimap.hpp"
