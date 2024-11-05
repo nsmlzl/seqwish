@@ -73,7 +73,13 @@ void compact_nodes(
             j = ovlp_end_in_q;
         }
     };
-    paryfor::parallel_for<size_t>(1, num_seqs+1, num_threads, 10000, handle_seq);
+    if (num_threads > 1) {
+        paryfor::parallel_for<size_t>(1, num_seqs+1, num_threads-1, 10000, handle_seq);
+    } else {
+        for (size_t i = 1; i < num_seqs+1; i++) {
+            handle_seq(i);
+        }
+    }
     //std::cerr << graph_size << " " << seq_id_bv.size() << std::endl;
     seq_id_abv.set(graph_size);
     // save our bitvector
