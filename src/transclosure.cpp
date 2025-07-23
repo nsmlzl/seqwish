@@ -376,6 +376,7 @@ size_t compute_transitive_closures(
         for (uint64_t t = 0; t < num_threads; ++t) {
             workers.emplace_back(worker_lambda, t);
         }
+        // TODO improve work distribution; don't let workers starve to death
         // manage the threads
         uint64_t empty_iter_count = 0;
         auto still_exploring = [&explorings]() {
@@ -503,6 +504,7 @@ size_t compute_transitive_closures(
         if (show_progress) std::cerr << "[seqwish::transclosure#ovlp_size] " << std::fixed << std::showpoint << std::setprecision(3) << ovlp.size() << std::endl;
 
         local_start_time = std::chrono::steady_clock::now();
+        // TODO implement some sort of work stealing
         paryfor::parallel_for<uint64_t>(
             0, ovlp.size(), num_threads, 10000,
             [&](uint64_t k) {

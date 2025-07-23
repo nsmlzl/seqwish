@@ -103,7 +103,7 @@ void emit_gfa(std::ostream& out,
 
     // write the paths
     size_t num_seqs = seqidx.n_seqs();
-    // should be made to run in parallel
+    // should be made to run in parallel !!!
     for (size_t i = 1; i <= num_seqs; ++i) {
         size_t j = seqidx.nth_seq_offset(i);
         size_t seq_len = seqidx.nth_seq_length(i);
