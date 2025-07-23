@@ -341,8 +341,16 @@ size_t compute_transitive_closures(
         std::atomic<bool> work_todo;
         std::vector<std::atomic<bool>> explorings(num_threads);
         work_todo.store(false);
+
+        //std::vector<double> stall_perc(num_threads, 0.0);
+
         auto worker_lambda =
             [&](uint64_t tid) {
+                /*
+                int total_iter = 0;
+                int stalls = 0;
+                bool prev_stall = false;
+                */
                 //auto& ovlp = ovlps[tid];
                 auto& exploring = explorings[tid];
                 while (!work_todo.load()) {
@@ -352,6 +360,10 @@ size_t compute_transitive_closures(
                 std::pair<pos_t, uint64_t> item;
                 while (work_todo.load()) {
                     if (todo_out.try_pop(item)) {
+                        /*
+                        total_iter++;
+                        prev_stall = false;
+                        */
                         exploring.store(true);
                         auto& pos = item.first;
                         auto& match_len = item.second;
@@ -365,10 +377,18 @@ size_t compute_transitive_closures(
                                          ovlp_q,
                                          todo_in);
                     } else {
+                        /*
+                        if (!prev_stall) {
+                            total_iter++;
+                            stalls++;
+                            prev_stall = true;
+                        }
+                        */
                         exploring.store(false);
                         std::this_thread::sleep_for(0.00001ns);
                     }
                 }
+                //stall_perc[tid] = double(stalls) / double(total_iter);
                 exploring.store(false);
             };
         // launch our threads to expand the overlap set in parallel
@@ -423,6 +443,15 @@ size_t compute_transitive_closures(
 
 #ifdef DEBUG_TRANSCLOSURE
         if (show_progress) std::cerr << "[seqwish::transclosure#overlap_collect] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
+        /*
+        double stall_perc_global = 0.0;
+        for (double d : stall_perc) {
+            stall_perc_global += d;
+        }
+        stall_perc_global = stall_perc_global * 100.0 / num_threads;
+        if (show_progress) std::cerr << "[seqwish::transclosure#stall_perc] " << std::fixed << std::showpoint << stall_perc_global << std::endl;
+        */
+
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " rank_build" << std::endl;
 #endif
         local_start_time = std::chrono::steady_clock::now();
@@ -502,12 +531,14 @@ size_t compute_transitive_closures(
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " parallel_union_find" << std::endl;
 #endif
         if (show_progress) std::cerr << "[seqwish::transclosure#ovlp_size] " << std::fixed << std::showpoint << std::setprecision(3) << ovlp.size() << std::endl;
+        //std::vector<double> active_dur(num_threads, 0.0);
 
         local_start_time = std::chrono::steady_clock::now();
         // TODO implement some sort of work stealing
         paryfor::parallel_for<uint64_t>(
             0, ovlp.size(), num_threads, 10000,
-            [&](uint64_t k) {
+            [&](uint64_t k, int tid) {
+                auto start = std::chrono::steady_clock::now();
                 auto& s = ovlp.at(k);
                 auto& r = s.first;
                 pos_t p = r.pos;
@@ -516,8 +547,16 @@ size_t compute_transitive_closures(
                     disjoint_sets.unite(q_curr_rank(j), q_curr_rank(offset(p)));
                     incr_pos(p);
                 }
+                auto end = std::chrono::steady_clock::now();
+                //active_dur[tid] += std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count();
             });
         // now read out our transclosures
+        /*
+        for (double cur_dur : active_dur) {
+            std::cout << cur_dur << " ";
+        }
+        std::cout << std::endl;
+        */
 #ifdef DEBUG_TRANSCLOSURE
         if (show_progress) std::cerr << "[seqwish::transclosure#parallel_union_find] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " dset_write" << std::endl;
