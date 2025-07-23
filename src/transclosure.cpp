@@ -268,6 +268,7 @@ size_t compute_transitive_closures(
         bool show_progress,
         uint64_t num_threads,
         const std::chrono::time_point<std::chrono::steady_clock>& start_time) {
+    std::chrono::time_point<std::chrono::steady_clock> local_start_time = std::chrono::steady_clock::now();
     // open the writers in the iitrees
     node_iitree.open_writer();
     path_iitree.open_writer();
@@ -289,6 +290,7 @@ size_t compute_transitive_closures(
     //uint64_t last_seq_id = seqidx.seq_id_at(0);
     // collect based on a seed chunk of a given length
     for (uint64_t i = 0; i < input_seq_length; ) {
+        local_start_time = std::chrono::steady_clock::now();
         // scan our q_seen_bv to find our next start
         //std::cerr << "closing\t" << i << std::endl;
         while (i < input_seq_length && q_seen_bv[i]) ++i;
@@ -317,8 +319,10 @@ size_t compute_transitive_closures(
         std::deque<std::pair<pos_t, uint64_t>> todo; // intermediate buffer for master thread
         std::vector<std::pair<match_t, bool>> ovlp; // written into by the master thread
 #ifdef DEBUG_TRANSCLOSURE
+        if (show_progress) std::cerr << "[seqwish::transclosure#start] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " overlap_collect" << std::endl;
 #endif
+        local_start_time = std::chrono::steady_clock::now();
         // seed the initial ranges
         // the chunk range isn't an actual alignment, so we handle it differently
         for_each_fresh_range({chunk_start, chunk_end, 0}, q_seen_bv, [&](match_t b) {
@@ -417,8 +421,10 @@ size_t compute_transitive_closures(
         delete ovlp_q_ptr;
 
 #ifdef DEBUG_TRANSCLOSURE
+        if (show_progress) std::cerr << "[seqwish::transclosure#overlap_collect] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " rank_build" << std::endl;
 #endif
+        local_start_time = std::chrono::steady_clock::now();
         // run the transclosure for this region using lock-free union find
         // convert the ranges into positions in the input sequence space
         // ... compute ranges
@@ -491,8 +497,12 @@ size_t compute_transitive_closures(
         // this initializes everything
         auto disjoint_sets = DisjointSets(q_sets_data.data(), q_sets_data.size());
 #ifdef DEBUG_TRANSCLOSURE
+        if (show_progress) std::cerr << "[seqwish::transclosure#rank_build] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " parallel_union_find" << std::endl;
 #endif
+        if (show_progress) std::cerr << "[seqwish::transclosure#ovlp_size] " << std::fixed << std::showpoint << std::setprecision(3) << ovlp.size() << std::endl;
+
+        local_start_time = std::chrono::steady_clock::now();
         paryfor::parallel_for<uint64_t>(
             0, ovlp.size(), num_threads, 10000,
             [&](uint64_t k) {
@@ -507,8 +517,10 @@ size_t compute_transitive_closures(
             });
         // now read out our transclosures
 #ifdef DEBUG_TRANSCLOSURE
+        if (show_progress) std::cerr << "[seqwish::transclosure#parallel_union_find] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " dset_write" << std::endl;
 #endif
+        local_start_time = std::chrono::steady_clock::now();
         // maps from dset id to query base
         auto* dsets_ptr = new std::vector<std::pair<uint64_t, uint64_t>>(q_curr_bv_count);
         auto& dsets = *dsets_ptr;
@@ -532,8 +544,10 @@ size_t compute_transitive_closures(
                     dsets.end());
         // compress the dsets
 #ifdef DEBUG_TRANSCLOSURE
+        if (show_progress) std::cerr << "[seqwish::transclosure#dset_write] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " dset_compression" << std::endl;
 #endif
+        local_start_time = std::chrono::steady_clock::now();
         ips4o::parallel::sort(dsets.begin(), dsets.end(), std::less<>(), num_threads);
 
         uint64_t c = 0;
@@ -553,8 +567,10 @@ size_t compute_transitive_closures(
         */
         // sort by the smallest starting position in each disjoint set
 #ifdef DEBUG_TRANSCLOSURE
+        if (show_progress) std::cerr << "[seqwish::transclosure#dset_compression] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " dset_sort" << std::endl;
 #endif
+        local_start_time = std::chrono::steady_clock::now();
         std::vector<std::pair<uint64_t, uint64_t>> dsets_by_min_pos(c+1);
         for (uint64_t x = 0; x < c+1; ++x) {
             dsets_by_min_pos[x].second = x;
@@ -572,8 +588,10 @@ size_t compute_transitive_closures(
         */
         // invert the naming
 #ifdef DEBUG_TRANSCLOSURE
+        if (show_progress) std::cerr << "[seqwish::transclosure#dset_sort] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " dset_invert" << std::endl;
 #endif
+        local_start_time = std::chrono::steady_clock::now();
         std::vector<uint64_t> dset_names(c+1);
         uint64_t x = 0;
         for (auto& d : dsets_by_min_pos) {
@@ -591,14 +609,18 @@ size_t compute_transitive_closures(
         */
         // now, run the graph emission
 #ifdef DEBUG_TRANSCLOSURE
+        if (show_progress) std::cerr << "[seqwish::transclosure#dset_invert] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
         if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << chunk_start << "-" << chunk_end << " graph_emission" << std::endl;
 #endif
+        local_start_time = std::chrono::steady_clock::now();
         // mark q_seen_bv
+        // TODO parallelize?
         for (auto& d : dsets) {
             const auto& curr_offset = d.second;
             q_seen_bv[curr_offset] = 1;
             ++bases_seen;
         }
+        /*
         // wait for completion of the last writer
         if (graph_writer != nullptr) {
             graph_writer->join();
@@ -614,12 +636,19 @@ size_t compute_transitive_closures(
                                        dsets_ptr,
                                        repeat_max,
                                        min_repeat_dist);
+        */
+        write_graph_chunk(seqidx, node_iitree, path_iitree, seq_v_out, range_buffer, dsets_ptr, repeat_max, min_repeat_dist);
+
+        if (show_progress) std::cerr << "[seqwish::transclosure#graph_emission] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
     }
+    local_start_time = std::chrono::steady_clock::now();
+    /*
     // clean up the last writer
     if (graph_writer != nullptr) {
         graph_writer->join();
         delete graph_writer;
     }
+    */
     // close the graph sequence vector
     size_t seq_bytes = seq_v_out.tellp();
     seq_v_out.close();
@@ -631,11 +660,17 @@ size_t compute_transitive_closures(
     // close writers
     node_iitree.close_writer();
     path_iitree.close_writer();
+    if (show_progress) std::cerr << "[seqwish::transclosure#clean_up] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
     // build node_mm and path_mm indexes
+    local_start_time = std::chrono::steady_clock::now();
     node_iitree.index(num_threads);
+    //if (show_progress) std::cerr << "[seqwish::transclosure#node_iitree_building] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
+    //local_start_time = std::chrono::steady_clock::now();
     path_iitree.index(num_threads);
 #ifdef DEBUG_TRANSCLOSURE
     if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << "done" << std::endl;
+    //if (show_progress) std::cerr << "[seqwish::transclosure#path_iitree_building] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
+    if (show_progress) std::cerr << "[seqwish::transclosure#iitree_building] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
 #endif
     return seq_bytes;
 }

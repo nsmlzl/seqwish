@@ -125,14 +125,17 @@ int main(int argc, char** argv) {
 
     // 1) index the queries (Q) to provide sequence name to position and position to sequence name mapping, generating a CSA and a sequence file
     if (args::get(show_progress)) std::cerr << "[seqwish::seqidx] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " indexing sequences" << std::endl;
+    std::chrono::time_point<std::chrono::steady_clock> local_start_time = std::chrono::steady_clock::now();
     auto seqidx_ptr = std::make_unique<seqindex_t>();
     auto& seqidx = *seqidx_ptr;
     seqidx.build_index(args::get(seqs));
     seqidx.save();
+    if (show_progress) std::cerr << "[seqwish::seqidx#index_built] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
     if (args::get(show_progress)) std::cerr << "[seqwish::seqidx] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " index built" << std::endl;
 
     // 2) parse the alignments into position pairs and index (A)
     if (args::get(show_progress)) std::cerr << "[seqwish::alignments] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " processing alignments" << std::endl;
+    local_start_time = std::chrono::steady_clock::now();
     const std::string aln_idx = temp_file::create("seqwish-", ".sqa");
     auto aln_iitree_ptr = std::make_unique<mmmulti::iitree<uint64_t, pos_t>>(aln_idx);
     auto& aln_iitree = *aln_iitree_ptr;
@@ -148,9 +151,12 @@ int main(int argc, char** argv) {
             unpack_paf_alignments(file, aln_iitree, seqidx, min_length, sparse_match, num_threads);
         }
     }
+    if (show_progress) std::cerr << "[seqwish::alignments#unpack_paf_alignments] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
     if (args::get(show_progress)) std::cerr << "[seqwish::alignments] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " indexing" << std::endl;
+    local_start_time = std::chrono::steady_clock::now();
     aln_iitree.index(num_threads);
     if (args::get(show_progress)) std::cerr << "[seqwish::alignments] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " index built" << std::endl;
+    if (show_progress) std::cerr << "[seqwish::alignments#index_build] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
     //if (args::get(debug)) dump_paf_alignments(args::get(paf_alns));
     //uint64_t n_domains = std::max((uint64_t)1, (uint64_t)args::get(num_domains));
     //range_pos_iitii aln_iitree = aln_iitree_builder.build(n_domains);
@@ -190,9 +196,12 @@ int main(int argc, char** argv) {
 
     // 4) generate the node id index (I) by compressing non-bifurcating regions of the graph into nodes
     if (args::get(show_progress)) std::cerr << "[seqwish::compact] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " compacting nodes" << std::endl;
+    local_start_time = std::chrono::steady_clock::now();
     sdsl::bit_vector seq_id_bv(graph_length+1);
     compact_nodes(seqidx, graph_length, node_iitree, path_iitree, seq_id_bv, num_threads);
     if (args::get(show_progress)) std::cerr << "[seqwish::compact] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " done compacting" << std::endl;
+    if (show_progress) std::cerr << "[seqwish::compact#compacting] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
+    local_start_time = std::chrono::steady_clock::now();
     if (args::get(verbose_debug)) std::cerr << seq_id_bv << std::endl;
     sdsl::sd_vector<> seq_id_cbv;
     sdsl::sd_vector<>::rank_1_type seq_id_cbv_rank;
@@ -202,17 +211,21 @@ int main(int argc, char** argv) {
     sdsl::util::assign(seq_id_cbv_rank, sdsl::sd_vector<>::rank_1_type(&seq_id_cbv));
     sdsl::util::assign(seq_id_cbv_select, sdsl::sd_vector<>::select_1_type(&seq_id_cbv));
     if (args::get(show_progress)) std::cerr << "[seqwish::compact] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " built node index" << std::endl;
+    if (show_progress) std::cerr << "[seqwish::compact#node_index_build] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
 
     // 5) determine links between nodes
     if (args::get(show_progress)) std::cerr << "[seqwish::links] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " finding graph links" << std::endl;
+    local_start_time = std::chrono::steady_clock::now();
     const std::string link_mm_idx =  temp_file::create("seqwish-", ".sql");
     auto link_mmset_ptr = std::make_unique<mmmulti::set<std::pair<pos_t, pos_t>>>(link_mm_idx);
     auto& link_mmset = *link_mmset_ptr;
     derive_links(seqidx, node_iitree, path_iitree, seq_id_cbv, seq_id_cbv_rank, seq_id_cbv_select, link_mmset, num_threads);
     if (args::get(show_progress)) std::cerr << "[seqwish::links] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " links derived" << std::endl;
+    if (show_progress) std::cerr << "[seqwish::links#deriving_graph_links] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
 
     // 6) emit the graph in GFA or VGP format
     if (args::get(show_progress)) std::cerr << "[seqwish::gfa] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " writing graph" << std::endl;
+    local_start_time = std::chrono::steady_clock::now();
     if (!args::get(gfa_out).empty()) {
         std::ofstream out(args::get(gfa_out).c_str());
         emit_gfa(out, graph_length, seq_v_file, node_iitree, path_iitree, seq_id_cbv, seq_id_cbv_rank, seq_id_cbv_select, seqidx, link_mmset, num_threads);
@@ -223,6 +236,7 @@ int main(int argc, char** argv) {
         emit_gfa(std::cout, graph_length, seq_v_file, node_iitree, path_iitree, seq_id_cbv, seq_id_cbv_rank, seq_id_cbv_select, seqidx, link_mmset, num_threads);
     }
     if (args::get(show_progress)) std::cerr << "[seqwish::gfa] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " done" << std::endl;
+    if (show_progress) std::cerr << "[seqwish::gfa#write_graph] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(local_start_time) << std::endl;
 
     return(0);
 }
