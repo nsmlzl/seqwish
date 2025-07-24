@@ -168,90 +168,71 @@ void write_graph_chunk(const seqindex_t& seqidx,
                        mmmulti::iitree<uint64_t, pos_t>& node_iitree,
                        mmmulti::iitree<uint64_t, pos_t>& path_iitree,
                        std::ofstream& seq_v_out,
-                       std::map<pos_t, range_t>& range_buffer,
+                       std::map<pos_t, range_t>& range_buffer_dummy,  // TODO remove global range_buffer
                        std::vector<std::pair<uint64_t, uint64_t>>* dsets_ptr,
                        uint64_t repeat_max,
                        uint64_t min_repeat_dist) {
-    auto& dsets = *dsets_ptr;
-    size_t seq_v_length = seq_v_out.tellp();
-    uint64_t last_dset_id = std::numeric_limits<uint64_t>::max(); // ~inf
-    char current_base = '\0';
-    // determine if we've switched references
-    // here we implement a count of the number of times we touch the current sequence
-    std::map<uint64_t, uint64_t> seq_counts;
-    std::map<uint64_t, pos_t> last_seq_pos;
-    auto close_to_prev =
-        [&last_seq_pos,
-         &min_repeat_dist]
-        (const uint64_t& seq_id,
-         const pos_t& pos) {
-            auto f = last_seq_pos.find(seq_id);
-            if (f == last_seq_pos.end()) {
-                return false;
-            } else {
-                if (min_repeat_dist > std::abs((int64_t)offset(pos) - (int64_t)offset(f->second))) {
-                    return true;
-                } else {
-                    return false;
-                }
-            }
-        };
-    // run the closure for each dset, avoiding looping as configured
-    std::map<uint64_t, std::vector<pos_t>> todos;
-    std::string seq_out;
-    auto flush_todos =
-        [&](void) {
-            for (auto& t : todos) {
-                seq_out.push_back(current_base);
-                ++seq_v_length;
-                for (auto& pos : t.second) {
-                    extend_range(seq_v_length-1, pos, range_buffer, seqidx, node_iitree, path_iitree);
-                }
-            }
-        };
-    for (auto& d : dsets) {
-        const auto& curr_dset_id = d.first;
-        const auto& curr_offset = d.second;
-        char base = seqidx.at(curr_offset);
-        // if we're on a new position
-        if (curr_dset_id != last_dset_id) {
-            if (repeat_max || min_repeat_dist) {
-                // finish out todos stashed from repeat_max limitations
-                flush_todos();
-                todos.clear();
-                // empty out our seq counts and last seq positions
-                seq_counts.clear();
-                last_seq_pos.clear();
-            }
-            // emit our new position
-            current_base = base;
-            seq_out.push_back(current_base);
-            ++seq_v_length;
-            flush_ranges(seq_v_length-1, range_buffer, node_iitree, path_iitree);
-            last_dset_id = curr_dset_id;
-        }
-        pos_t curr_q_pos = make_pos_t(curr_offset, false);
-        if (current_base != seqidx.at_pos(curr_q_pos)) {
-            curr_q_pos = make_pos_t(curr_offset, true);
-        }
-        assert(current_base = seqidx.at_pos(curr_q_pos));
-        uint64_t curr_seq_id = seqidx.seq_id_at(curr_offset);
-        uint64_t curr_seq_count = 0;
-        if ((min_repeat_dist != 0 && close_to_prev(curr_seq_id, curr_q_pos))
-            || (repeat_max != 0 && seq_counts[curr_seq_id]+1 > repeat_max)) {
-            curr_seq_count = ++seq_counts[curr_seq_id];
-        } else if (repeat_max != 0 || min_repeat_dist != 0) {
-            ++seq_counts[curr_seq_id];
-        }
-        if (curr_seq_count == 0) {
-            extend_range(seq_v_length-1, curr_q_pos, range_buffer, seqidx, node_iitree, path_iitree);
-        } else {
-            todos[seq_counts[curr_seq_id]].push_back(curr_q_pos);
-        }
-        last_seq_pos[curr_seq_id] = curr_q_pos;
+    std::vector<std::pair<uint64_t, uint64_t>>& dsets = *dsets_ptr;
+
+    std::cout << "dsets.size(): " << dsets.size() << " dset-ids: " << dsets.front().first << " - " << dsets.back().first << std::endl;
+
+    if (repeat_max != 0 || min_repeat_dist != 0) {
+        std::cerr << "WARNING: repeat-max or min-repeat-dist provided, but not implemented in current parallel implementation!" << std::endl;
     }
-    flush_todos(); // catch any todos we had hanging around
+    assert(repeat_max == 0 || min_repeat_dist == 0);
+
+    size_t seq_v_length = seq_v_out.tellp();
+
+    int graph_size = dsets.back().first + 1;
+    std::string seq_out(graph_size, char('\0'));
+
+    {
+        // thread local
+        uint64_t last_dset_id = std::numeric_limits<uint64_t>::max(); // ~inf
+        char current_base = '\0';
+        std::map<pos_t, range_t> local_range_buffer;
+
+        for (auto& d : dsets) {
+            const auto& curr_dset_id = d.first;
+            const auto& curr_offset = d.second;
+            char base = seqidx.at(curr_offset);
+            // if we're on a new position
+            if (curr_dset_id != last_dset_id) {
+                current_base = base;
+                seq_out[curr_dset_id] = current_base;
+                flush_ranges(seq_v_length + curr_dset_id, local_range_buffer, node_iitree, path_iitree);
+                last_dset_id = curr_dset_id;
+            }
+            pos_t curr_q_pos = make_pos_t(curr_offset, false);
+            if (current_base != seqidx.at_pos(curr_q_pos)) {
+                curr_q_pos = make_pos_t(curr_offset, true);
+            }
+            assert(current_base = seqidx.at_pos(curr_q_pos));
+            uint64_t curr_seq_id = seqidx.seq_id_at(curr_offset);
+            uint64_t curr_seq_count = 0;
+
+            extend_range(seq_v_length + curr_dset_id, curr_q_pos, local_range_buffer, seqidx, node_iitree, path_iitree);
+        }
+
+        flush_ranges(seq_v_length + graph_size + 1, local_range_buffer, node_iitree, path_iitree);
+        assert(local_range_buffer.empty());
+    }
+
+    // check if seq_out filled with valid data
+    for (char c: seq_out) {
+        auto validChar = [](char c) -> bool {
+            if (c == 'A' || c == 'G' || c == 'C' || c == 'T' || c == 'N') return true;
+            else return false;
+        };
+
+        if (!(validChar(c))) {
+            std::cout << "invalid char: " << c << std::endl;
+        }
+        assert(validChar(c));
+    }
+
     seq_v_out << seq_out;
+
     delete dsets_ptr;
 }
 
@@ -654,7 +635,7 @@ size_t compute_transitive_closures(
     // close the graph sequence vector
     size_t seq_bytes = seq_v_out.tellp();
     seq_v_out.close();
-    flush_ranges(seq_bytes+1, range_buffer, node_iitree, path_iitree);
+    //flush_ranges(seq_bytes+1, range_buffer, node_iitree, path_iitree);
     assert(range_buffer.empty());
 #ifdef DEBUG_TRANSCLOSURE
     if (show_progress) std::cerr << "[seqwish::transclosure] " << std::fixed << std::showpoint << std::setprecision(3) << seconds_since(start_time) << " " << std::setprecision(2) << (double)bases_seen / (double)seqidx.seq_length() * 100 << "% " << "building node_iitree and path_iitree indexes" << std::endl;
