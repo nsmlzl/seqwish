@@ -186,39 +186,87 @@ void write_graph_chunk(const seqindex_t& seqidx,
     int graph_size = dsets.back().first + 1;
     std::string seq_out(graph_size, char('\0'));
 
+    std::atomic<uint64_t> next_block_start{0};
+    const uint64_t BLOCK_SIZE = 100000;
+
+    #pragma omp parallel num_threads(32)
     {
-        // thread local
+        // thread local variables
         uint64_t last_dset_id = std::numeric_limits<uint64_t>::max(); // ~inf
-        char current_base = '\0';
         std::map<pos_t, range_t> local_range_buffer;
+        char current_base = '\0';
 
-        for (auto& d : dsets) {
-            const auto& curr_dset_id = d.first;
-            const auto& curr_offset = d.second;
-            char base = seqidx.at(curr_offset);
-            // if we're on a new position
-            if (curr_dset_id != last_dset_id) {
-                current_base = base;
-                seq_out[curr_dset_id] = current_base;
-                flush_ranges(seq_v_length + curr_dset_id, local_range_buffer, node_iitree, path_iitree);
-                last_dset_id = curr_dset_id;
-            }
-            pos_t curr_q_pos = make_pos_t(curr_offset, false);
-            if (current_base != seqidx.at_pos(curr_q_pos)) {
-                curr_q_pos = make_pos_t(curr_offset, true);
-            }
-            assert(current_base = seqidx.at_pos(curr_q_pos));
-            uint64_t curr_seq_id = seqidx.seq_id_at(curr_offset);
-            uint64_t curr_seq_count = 0;
+        while(true) {
+            uint64_t block_start = next_block_start.fetch_add(BLOCK_SIZE);
+            // all blocks within this chunk were processed
+            if (block_start >= dsets.size()) break;
 
-            extend_range(seq_v_length + curr_dset_id, curr_q_pos, local_range_buffer, seqidx, node_iitree, path_iitree);
+            if (block_start != 0) {
+                last_dset_id = dsets[block_start-1].first;
+            }
+
+            enum ThreadState {
+                FindingStart,
+                ProcessingBlock,
+                CompletingBlock,
+                Done
+            };
+            ThreadState state = ThreadState::FindingStart;
+
+            uint64_t idx = block_start;
+
+            while(state != ThreadState::Done) {
+                std::pair<uint64_t, uint64_t>& d = dsets[idx];
+
+                const auto& curr_dset_id = d.first;
+                if (curr_dset_id == last_dset_id && state == ThreadState::FindingStart) {
+                    // find start of processing-block; start is position where new dset-id occurs in block
+                    idx++;
+                    if (idx >= block_start + BLOCK_SIZE || idx >= dsets.size()) {
+                        break;  // block did not contain any new dset_ids; finish block
+                    }
+                    continue;
+                }
+
+                const auto& curr_offset = d.second;
+                char base = seqidx.at(curr_offset);
+                // if we're on a new position
+                if (curr_dset_id != last_dset_id) {
+                    if (state == ThreadState::CompletingBlock) break;  // the threads block is already depleeted; stop when detecting new new dset_id
+                    if (state == ThreadState::FindingStart) state = ThreadState::ProcessingBlock;
+
+                    current_base = base;
+                    assert(seq_out[curr_dset_id] == '\0');
+                    seq_out[curr_dset_id] = current_base;
+                    flush_ranges(seq_v_length + curr_dset_id, local_range_buffer, node_iitree, path_iitree);
+                    last_dset_id = curr_dset_id;
+                }
+                pos_t curr_q_pos = make_pos_t(curr_offset, false);
+                if (current_base != seqidx.at_pos(curr_q_pos)) {
+                    curr_q_pos = make_pos_t(curr_offset, true);
+                }
+                assert(current_base = seqidx.at_pos(curr_q_pos));
+                uint64_t curr_seq_id = seqidx.seq_id_at(curr_offset);
+                uint64_t curr_seq_count = 0;
+
+                extend_range(seq_v_length + curr_dset_id, curr_q_pos, local_range_buffer, seqidx, node_iitree, path_iitree);
+
+                idx++;
+                if (idx >= block_start + BLOCK_SIZE) {
+                    state = ThreadState::CompletingBlock;
+                }
+                if (idx >= dsets.size()) {
+                    break;
+                }
+            }
+
+            flush_ranges(seq_v_length + graph_size + 1, local_range_buffer, node_iitree, path_iitree);
+            assert(local_range_buffer.empty());
         }
-
-        flush_ranges(seq_v_length + graph_size + 1, local_range_buffer, node_iitree, path_iitree);
-        assert(local_range_buffer.empty());
     }
 
     // check if seq_out filled with valid data
+    int idx = 0;
     for (char c: seq_out) {
         auto validChar = [](char c) -> bool {
             if (c == 'A' || c == 'G' || c == 'C' || c == 'T' || c == 'N') return true;
@@ -226,9 +274,10 @@ void write_graph_chunk(const seqindex_t& seqidx,
         };
 
         if (!(validChar(c))) {
-            std::cout << "invalid char: " << c << std::endl;
+            std::cout << "invalid char (@ " << idx << "): " << c << std::endl;
         }
         assert(validChar(c));
+        idx++;
     }
 
     seq_v_out << seq_out;
